@@ -1,6 +1,7 @@
 # LLM Inference Optimization Challenge - Phase 1
 # Model: Qwen/Qwen3.5-2B, Hardware: 1 MiG H200 (18GB VRAM)
 # Key metrics: TTFT Floor=100ms/Ceiling=1500ms, TPOT Floor=20ms/Ceiling=45ms
+# Optimization strategy: FP8 KV cache + FP8 weights + large-batch throughput
 services:
   model:
     image: vllm/vllm-openai:v0.22.1
@@ -9,22 +10,27 @@ services:
       - -m
       - vllm.entrypoints.openai.api_server
     command:
-      # Core model config
+      # ── Core model config ──
       - --model=/model
       - --served-model-name=Qwen3.5-2B
       - --host=0.0.0.0
       - --port=8000
-      # Memory & context
+      # ── Memory & context ──
       - --max-model-len=262144
       - --gpu-memory-utilization=0.95
-      # Optimization flags
+      # ── KV Cache: BF16 → FP8 (saves ~4GB, negligible accuracy loss) ──
       - --kv-cache-dtype=fp8_e4m3
+      # ── Weights: BF16 → FP8 (saves ~2GB, leverages H200 FP8 tensor cores) ──
       - --quantization=fp8
+      # ── Prefix caching: reuse KV cache for repeated prompt prefixes ──
       - --enable-prefix-caching
-      # Batching & scheduling
+      # ── Batching: explicit values (performance-mode=throughput only works
+      #    when these are unset — setting them explicitly gives full control) ──
       - --max-num-seqs=1024
-      - --performance-mode=throughput
+      - --max-num-batched-tokens=8192
+      # ── CUDA graphs: O3 enables aggressive graph capture for decode steps ──
       - --optimization-level=O3
+      # ── Block size: 32 reduces fragmentation for 256K context length ──
       - --block-size=32
     ports:
       - "8000:8000"

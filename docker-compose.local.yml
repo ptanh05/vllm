@@ -1,0 +1,38 @@
+# docker-compose.local.yml — For LOCAL TESTING only
+# Uses CUDA 12.8 base to match local driver (573.24 / CUDA 12.8)
+# Build: docker compose -f docker-compose.local.yml build
+# Run:   docker compose -f docker-compose.local.yml up -d
+services:
+  model:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local
+    image: vllm-optimized:local
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=Qwen3.5-2B
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=8192       # Reduced for local testing (8K instead of 256K)
+      - --gpu-memory-utilization=0.90
+      - --kv-cache-dtype=fp8_e4m3
+      - --quantization=fp8
+      - --enable-prefix-caching
+      - --max-num-seqs=256
+      - --max-num-batched-tokens=4096
+      - --optimization-level=O3
+      - --block-size=32
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

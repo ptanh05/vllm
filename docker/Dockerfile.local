@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.local — Local development build for CUDA 12.x
+# Builds vLLM from source targeting CUDA 12.8
+#
+# Build & run:
+#   docker compose -f docker-compose.local.yml build
+#   docker compose -f docker-compose.local.yml up -d
+#
+# NOTE: First build takes ~30-60 minutes (compiles CUDA kernels)
+
+ARG CUDA_VERSION=12.8.1
+ARG PYTHON_VERSION=3.12
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
+
+ARG PYTHON_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential \
+    ninja-build \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-venv \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && update-alternatives --set python3 /usr/bin/python${PYTHON_VERSION} \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY . .
+
+# Install uv for faster pip
+RUN python3 -m pip install uv
+
+# Build vLLM with CUDA 12.x support
+RUN VLLM_USE_PRECOMPILED=1 uv pip install --system \
+    -e . \
+    --no-build-isolation \
+    --verbose 2>&1 | tail -20
+
+# ---- Runtime Stage ----
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /vllm-workspace
+
+# Copy installed packages
+COPY --from=builder /usr/local/lib/python${PYTHON_VERSION}/dist-packages /usr/local/lib/python${PYTHON_VERSION}/dist-packages
+COPY --from=builder /workspace/vllm /vllm-workspace/vllm
+
+ENV PATH="/usr/local/bin:$PATH"
+ENV VLLM_USE_PRECOMPILED=1
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
