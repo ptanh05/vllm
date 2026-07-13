@@ -1,0 +1,29 @@
+# Dockerfile.custom - Custom vLLM image for LLM Inference Optimization Challenge
+# Builds on top of the official vllm-openai image with additional optimizations
+#
+# Usage:
+#   docker build -t your-username/vllm-optimized:latest -f docker/Dockerfile.custom .
+#   docker push your-username/vllm-optimized:latest
+
+FROM vllm/vllm-openai:v0.22.1
+
+# Install additional performance optimization packages
+RUN --mount=type=cache,target=/opt/uv/cache \
+    python3 -m uv pip install --system --no-deps \
+        flashinfer-python \
+        ninja \
+        xgrammar
+
+# Set environment variables for optimization
+ENV VLLM_ATTENTION_BACKEND=FLASHINFER
+ENV VLLM_USE_V1=0
+ENV VLLM_USE_PRECOMPILED=1
+ENV TORCHINDUCTOR_FX_REMOTE_CACHE=1
+
+# Healthcheck endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# Default entrypoint (can be overridden by docker-compose)
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+CMD ["--help"]

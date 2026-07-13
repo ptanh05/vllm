@@ -1,0 +1,38 @@
+# LLM Inference Optimization Challenge - Phase 1
+# Model: Qwen/Qwen3.5-2B, Hardware: 1 MiG H200 (18GB VRAM)
+# Key metrics: TTFT Floor=100ms/Ceiling=1500ms, TPOT Floor=20ms/Ceiling=45ms
+services:
+  model:
+    image: vllm/vllm-openai:v0.22.1
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      # Core model config
+      - --model=/model
+      - --served-model-name=Qwen3.5-2B
+      - --host=0.0.0.0
+      - --port=8000
+      # Memory & context
+      - --max-model-len=262144
+      - --gpu-memory-utilization=0.95
+      # Optimization flags
+      - --kv-cache-dtype=fp8_e4m3
+      - --quantization=fp8
+      - --enable-prefix-caching
+      # Batching & scheduling
+      - --max-num-seqs=1024
+      - --performance-mode=throughput
+      - --optimization-level=O3
+      - --block-size=32
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
