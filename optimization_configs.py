@@ -7,14 +7,22 @@ Model specs:
   - hidden_size=4096, num_layers=32 (8 full-attn + 24 linear-attn)
   - num_kv_heads=4, head_dim=256
   - KV cache per token (BF16) for 8 full-attn layers: 16,384 elements
-  - KV cache full 256K context (BF16): ~8 GB → FP8: ~4 GB
-  - Weights (BF16): ~4 GB → FP8: ~2 GB
+  - KV cache full 256K context (BF16): ~8 GB -> FP8: ~4 GB
+  - Weights (BF16): ~4 GB -> FP8: ~2 GB
   - VRAM available: 18 GB
 
 Key observation: only 25% layers are full-attention with traditional KV cache.
+
+All flags verified against:
+  - vllm/engine/arg_utils.py (CLI flag definitions)
+  - vllm/config/vllm.py (VllmConfig)
+  - vllm/config/cache.py (CacheConfig)
+  - vllm/config/scheduler.py (SchedulerConfig)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from vllm.config.vllm import PerformanceMode
 
 
 @dataclass
@@ -31,32 +39,37 @@ class ServingConfig:
     gpu_memory_utilization: float = 0.95        # Leave 5% headroom
 
     # === QUANTIZATION (Key Optimizations) ===
-    kv_cache_dtype: str = "fp8_e4m3"            # KV cache: BF16 → FP8 (save ~4GB)
-    quantization: str = "fp8"                   # Weights: BF16 → FP8 (save ~2GB)
+    kv_cache_dtype: str = "fp8_e4m3"            # KV cache: BF16 -> FP8 (save ~4GB)
+    quantization: str = "fp8"                   # Weights: BF16 -> FP8 (save ~2GB)
 
     # === SCHEDULING / BATCHING ===
+    # Verify: arg_utils.py:1129, cache.py:field auto-generated
     enable_prefix_caching: bool = True          # Reuse KV cache for shared prefixes
+    # Verify: arg_utils.py:1367, scheduler_config.py:63
     max_num_seqs: int = 1024                    # Default=256, increased for throughput
+    # Verify: arg_utils.py:1360, scheduler_config.py:49
     max_num_batched_tokens: int = 8192          # Default=2048 in API server
     # NOTE: performance_mode=throughput only doubles batching params if they
-    # are NOT explicitly set. Since we set them above, explicitly, keep
-    # performance_mode="balanced" (no-op) to avoid confusion.
-    performance_mode: str = "balanced"          # batching set explicitly above
+    # are NOT explicitly set (arg_utils.py:2507-2512). Since we set them
+    # explicitly, keep performance_mode="balanced" (no-op) to avoid confusion.
+    # Verify: vllm.py:87, arg_utils.py:1493
+    performance_mode: PerformanceMode = "balanced"
 
     # === CUDA GRAPH ===
-    optimization_level: str = "O3"              # O2=default, O3=more aggressive
-    # enforce_eager: bool = False               # False = use CUDA graphs
+    # Verify: vllm.py:72-84, arg_utils.py:1491
+    optimization_level: str = "O3"              # O2=default, O3=aggressive
 
     # === BLOCK MANAGEMENT ===
+    # Use --block-size CLI flag. V2 block manager is the default in v0.22.1.
+    # Flag --use-v2-block-manager does NOT exist in arg_utils.py.
+    # Verify: arg_utils.py:1117, cache.py:45
     block_size: int = 32                        # Default=16, larger=less fragmentation
-    use_v2_block_manager: bool = True           # Default=True in v0.22
 
     # === ATTENTION ===
-    # attention_backend: str = ""               # auto-detect (FlashAttn or FlashInfer)
-
-    # === ADVANCED ===
-    # scheduler_delay_factor: float = 0.0      # Prefer immediate scheduling
-    # num_scheduler_steps: int = 1              # Default=1
+    # Use --attention-backend CLI flag (arg_utils.py:900)
+    # Valid values: FLASH_ATTN, FLASHINFER (V1), etc.
+    # See vllm/v1/attention/backends/registry.py:34-80
+    attention_backend: str | None = None        # auto-detect (None = auto)
 
     def to_command_args(self) -> list[str]:
         """Convert config to CLI argument list for docker-compose command."""
@@ -76,33 +89,35 @@ class ServingConfig:
             f"--optimization-level={self.optimization_level}",
             f"--block-size={self.block_size}",
         ]
+        if self.attention_backend is not None:
+            args.append(f"--attention-backend={self.attention_backend}")
         return args
 
 
 # Pre-defined configuration presets
-CONFIG_PRESETS = {
+# Each preset explicitly sets batching values so --performance-mode is "balanced".
+CONFIG_PRESETS: dict[str, ServingConfig] = {
     "max_throughput": ServingConfig(
         max_num_seqs=2048,
         max_num_batched_tokens=16384,
-        performance_mode="balanced",     # batching set explicitly
+        performance_mode="balanced",
         optimization_level="O3",
     ),
     "balanced": ServingConfig(
         max_num_seqs=1024,
         max_num_batched_tokens=8192,
-        performance_mode="balanced",     # batching set explicitly
+        performance_mode="balanced",
     ),
     "low_latency": ServingConfig(
         max_num_seqs=256,                # Smaller batches = lower TPOT
         max_num_batched_tokens=4096,
-        performance_mode="balanced",     # batching set explicitly
+        performance_mode="interactivity",
         optimization_level="O3",
     ),
     "quant_only": ServingConfig(
-        # Only quantization, conservative batching
         max_num_seqs=256,
         max_num_batched_tokens=4096,
-        performance_mode=None,     # type: ignore[arg-type]
+        performance_mode="balanced",
         optimization_level="O2",
     ),
 }

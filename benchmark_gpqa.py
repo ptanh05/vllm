@@ -12,11 +12,10 @@ Usage:
 import argparse
 import json
 import re
-import statistics
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+# No extra imports needed - Python 3.12 uses X | None syntax
 
 try:
     import httpx
@@ -87,7 +86,7 @@ def build_prompt(ex: GPQAExample) -> str:
     return prompt
 
 
-def extract_answer(response_text: str) -> Optional[str]:
+def extract_answer(response_text: str) -> str | None:
     """Extract the answer letter from model response using multiple strategies."""
     # Strategy 1: \boxed{X}
     m = re.search(r'\\boxed\{([A-Da-d])\}', response_text)

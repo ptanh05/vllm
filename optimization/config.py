@@ -11,6 +11,8 @@ Usage:
     cfg.kv_cache_dtype = "fp8_e4m3"
     cfg.performance_mode = "throughput"
     args = cfg.to_command_args()
+
+All flags verified against vllm/engine/arg_utils.py and config/*.py.
 """
 
 from dataclasses import dataclass, field, asdict
@@ -30,44 +32,61 @@ class OptConfig:
     tensor_parallel_size: int = 1
 
     # ── Memory ──
+    # Verify: arg_utils.py:1119, cache.py:field auto-generated
     gpu_memory_utilization: float = 0.95
-    kv_cache_dtype: str = "auto"  # auto, fp8_e4m3, fp8_e5m2
+    # Verify: arg_utils.py:1124, cache.py:22-26 (valid: auto, fp8, fp8_e4m3, fp8_e5m2)
+    kv_cache_dtype: str = "auto"
+    # Verify: arg_utils.py:1142, cache.py:112
     kv_cache_dtype_skip_layers: str | None = None
 
     # ── Batching ──
+    # Verify: arg_utils.py:1367, scheduler.py:63
     max_num_seqs: int | None = None  # None = auto
+    # Verify: arg_utils.py:1360, scheduler.py:49
     max_num_batched_tokens: int | None = None  # None = auto
 
     # ── Block management ──
+    # Verify: arg_utils.py:1117, cache.py:45 (default=16)
     block_size: int = 16
 
     # ── Prefix caching ──
+    # Verify: arg_utils.py:1129
     enable_prefix_caching: bool = True
-    prefix_caching_hash_algo: str = "xxhash"  # faster than sha256
+    # Verify: arg_utils.py:1136, cache.py:37 (valid: sha256, sha256_cbor, xxhash, xxhash_cbor)
+    prefix_caching_hash_algo: str = "sha256"  # xxhash is faster but needs extra pkg
 
     # ── Performance mode ──
+    # Verify: vllm.py:87, arg_utils.py:1493
     performance_mode: Literal["balanced", "interactivity", "throughput"] = "balanced"
 
     # ── Compilation ──
+    # Verify: vllm.py:72-84, arg_utils.py:1491
     optimization_level: Literal["O0", "O1", "O2", "O3"] = "O2"
 
     # ── Scheduling ──
+    # Verify: arg_utils.py:1392, scheduler.py:84
     enable_chunked_prefill: bool = True
-    scheduler_policy: str = "fcfs"
-    scheduler_delay_factor: float | None = None
+    # NOTE: scheduler_delay_factor does NOT exist as a vLLM CLI flag
+    # Verified: grepped arg_utils.py, scheduler.py — no match
+    # scheduler_policy also does NOT exist as a CLI flag
 
     # ── Quantization ──
-    quantization: str | None = None  # fp8, awq, gptq...
+    # Verify: arg_utils.py:803, quantization/__init__.py:13 (valid: fp8, awq, gptq...)
+    quantization: str | None = None
 
     # ── Speculative decoding ──
     spec_model: str | None = None
     spec_tokens: int | None = None
 
     # ── CUDA Graphs ──
-    cudagraph_capture_sizes: str | None = None  # e.g. "1,2,4,8,16,32,64,128,256"
+    # Verify: arg_utils.py:1424, type list[int] | None
+    # CLI format: --cudagraph-capture-sizes=1,2,4,8,16 (NOT -cc. prefix)
+    cudagraph_capture_sizes: str | None = None
 
     # ── Attention backend ──
-    attention_backend: str | None = None  # flash_attn, flashinfer
+    # Verify: arg_utils.py:900, v1/attention/backends/registry.py:34-80
+    # Valid: FLASH_ATTN, FLASHINFER, TRITON_ATTN (V1 only)
+    attention_backend: str | None = None
 
     @staticmethod
     def baseline() -> "OptConfig":
@@ -115,7 +134,6 @@ class OptConfig:
             optimization_level="O3",
             enable_chunked_prefill=True,
             cudagraph_capture_sizes="1,2,4,8,16,32,64,128,256,512",
-            scheduler_delay_factor=0.1,
         )
 
     def to_command_args(self) -> list[str]:
@@ -137,7 +155,8 @@ class OptConfig:
 
         if self.enable_prefix_caching:
             args.append("--enable-prefix-caching")
-            args.append(f"--prefix-caching-hash-algo={self.prefix_caching_hash_algo}")
+            if self.prefix_caching_hash_algo != "sha256":
+                args.append(f"--prefix-caching-hash-algo={self.prefix_caching_hash_algo}")
 
         if self.quantization:
             args.append(f"--quantization={self.quantization}")
@@ -155,11 +174,8 @@ class OptConfig:
         if self.enable_chunked_prefill:
             args.append("--enable-chunked-prefill")
 
-        if self.scheduler_delay_factor is not None:
-            args.append(f"--scheduler-delay-factor={self.scheduler_delay_factor}")
-
         if self.cudagraph_capture_sizes:
-            args.append(f"-cc.cudagraph_capture_sizes=[{self.cudagraph_capture_sizes}]")
+            args.append(f"--cudagraph-capture-sizes={self.cudagraph_capture_sizes}")
 
         if self.attention_backend:
             args.append(f"--attention-backend={self.attention_backend}")
@@ -198,7 +214,6 @@ TUNING_PRIORITY = [
     "optimization_level",
     "block_size",
     "enable_chunked_prefill",
-    "scheduler_delay_factor",
 
     # Tier 4 — fine-tuning
     "cudagraph_capture_sizes",

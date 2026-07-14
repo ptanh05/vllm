@@ -1,24 +1,28 @@
 # Dockerfile.custom - Custom vLLM image for LLM Inference Optimization Challenge
-# Builds on top of the official vllm-openai image with additional optimizations
+# Builds on top of the official vllm-openai image with additional packages.
+#
+# NOTE: Use `--attention-backend=flashinfer` in docker-compose command args
+# (not env vars) to activate FlashInfer. vLLM does not read VLLM_ATTENTION_BACKEND
+# as an environment variable.
 #
 # Usage:
 #   docker build -t your-username/vllm-optimized:latest -f docker/Dockerfile.custom .
 #   docker push your-username/vllm-optimized:latest
+#
+# Then in docker-compose.yml, use:
+#   image: your-username/vllm-optimized:latest
+#   command:
+#     - ... (all existing flags)
+#     - --attention-backend=flashinfer
 
 FROM vllm/vllm-openai:v0.22.1
 
-# Install additional performance optimization packages
+# Install flashinfer for V1 attention backend support
+# This is optional; vLLM defaults to FlashAttention (FA3) on H200 which is
+# already well-optimized. Only use if profiling shows FlashInfer is faster.
 RUN --mount=type=cache,target=/opt/uv/cache \
-    python3 -m uv pip install --system --no-deps \
-        flashinfer-python \
-        ninja \
-        xgrammar
-
-# Set environment variables for optimization
-ENV VLLM_ATTENTION_BACKEND=FLASHINFER
-ENV VLLM_USE_V1=0
-ENV VLLM_USE_PRECOMPILED=1
-ENV TORCHINDUCTOR_FX_REMOTE_CACHE=1
+    python3 -m uv pip install --system \
+        flashinfer-python
 
 # Healthcheck endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

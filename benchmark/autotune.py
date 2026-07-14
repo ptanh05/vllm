@@ -55,6 +55,9 @@ CANDIDATE_SPACE: dict[str, list[Any]] = {
     "optimization-level": ["O2", "O3"],
     "enable-chunked-prefill": [None],  # None = rely on vLLM default (True)
     "enable-prefix-caching": [None],
+    # NOTE: scheduler-delay-factor does NOT exist as a CLI flag in arg_utils.py.
+    # Verified: grepped full vllm/engine/arg_utils.py — no --scheduler-delay-factor.
+    # Removed from candidate space to avoid silent flag failures.
 }
 
 # Fixed params that stay constant across trials

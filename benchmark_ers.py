@@ -13,9 +13,7 @@ import json
 import time
 import statistics
 import urllib.request
-import urllib.error
 from dataclasses import dataclass
-from typing import Optional
 
 try:
     import httpx
@@ -60,7 +58,7 @@ def make_request_httpx(endpoint: str, model: str, messages: list,
     }
 
     t_start = time.time()
-    t_first_token: Optional[float] = None
+    t_first_token: float | None = None
     token_times: list[float] = []
     num_tokens = 0
 
@@ -127,7 +125,7 @@ def make_request_urllib(endpoint: str, model: str, messages: list,
     )
 
     t_start = time.time()
-    t_first_token: Optional[float] = None
+    t_first_token: float | None = None
     token_times: list[float] = []
     num_tokens = 0
 
